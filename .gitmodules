@@ -1,0 +1,8 @@
+[submodule "lib/arduinoFFT"]
+	path = lib/arduinoFFT
+	url = https://github.com/kosme/arduinoFFT.git
+	branch = develop
+[submodule "lib/FastLED"]
+	path = lib/FastLED
+	url = https://github.com/FastLED/FastLED.git
+	branch = master

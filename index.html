@@ -1,0 +1,180 @@
+<html>
+<head>
+  <script>
+    const calibrate_base_default = false;
+    const calibrate_tops_default = false;
+    const baseline_offset_exponent_default =  0.95;
+    const fall_duration_default = 0.2;
+    const brightness_default = 0.1;
+    const audio_scale_exponent_default = 0.6;
+    const upper_end_default = "#ff4400";
+    const lower_end_default = "#888888";
+    const sample_frequency_default = 5000;
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.gstatic.com">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/@jaames/iro/dist/iro.min.js"></script>
+  <style>
+      #colors {
+          display: flex;
+          align-items: center;
+          align-content: center;
+          box-sizing: border-box;
+      }
+      #colors > * {
+          padding: 4px;
+      }
+
+      button {
+          padding: 8px 16px;
+          width: 100%;
+      }
+
+      #root {
+          display: flex;
+          flex-direction: column;
+          align-content: center;
+          align-items: center;
+          max-width: 500px;
+          background: white;
+          border-radius: 4px;
+          margin: auto;
+          padding: 10px;
+          box-shadow: 0 0 40px #0003;
+      }
+
+      body {
+          background: #eee;
+          overflow: auto;
+          font-family: 'Montserrat', sans-serif;
+      }
+
+      button {
+        background: #1b76ed;
+        color: white;
+        border: none;
+        outline: none;
+        border-radius: 2px;
+        cursor: pointer;
+        font-family: inherit;
+        margin: 2px;
+      }
+      button:hover {
+        background: #3a8af3;
+      }
+      button:active {
+        background: #2f49dd;
+      }
+
+      #root div {
+        width: 100%;
+        display: flex;
+        align-items: flex-start;
+        align-content: center;
+        margin: 2px;
+      }
+      #root div label {
+        width: 100%;
+      }
+      #root div input {
+        width: 120px;
+        box-sizing: border-box;
+      }
+
+      #root div input[type=number] {
+        border: none;
+        background: #ddd;
+        padding: 4px 8px;
+        border-radius: 2px;
+      }
+
+      #root div input[type=color] {
+        border: none;
+        background: #ddd;
+        padding: 0;
+        padding: 0px 8px;
+      }
+  </style>
+</head>
+<body>
+    <script>
+      const send = (val) => {
+        var req = new XMLHttpRequest();
+        req.open("GET", `/set?${val}`);
+        req.send();
+      }
+      function hex_color_to_int(rrggbb) {
+          return parseInt(rrggbb.substr(1, 6), 16);
+      }
+
+      const param_any = (id)=> `${id}=${document.getElementById(id).value}`
+      const param_bool = (id)=> `${id}=${document.getElementById(id).checked}`
+      const param_color = (id)=> `${id}=${hex_color_to_int(document.getElementById(id).value)}`
+
+      const update_any = (el)=>send(param_any(el.id))
+      const update_bool = (el)=>send(param_bool(el.id))
+      const update_color = (el)=>send(param_color(el.id))
+    </script>
+
+    <div id="root">
+      <h2>Calibration</h2>
+      <div><label for="calibrate_base">Calibrate Baselines</label><input id="calibrate_base" type="checkbox"/></div>
+      <div><label for="calibrate_tops">Calibrate Tops</label><input id="calibrate_tops" type="checkbox"/></div>
+      <div><label for="baseline_offset_exponent">Calibration baseline exponent</label><input type="number" id="baseline_offset_exponent" min="0.0" step="0.05" max="10.0"/></div>
+
+      <br/>
+      
+      <h2>Audio</h2>
+      <div><label for="sample_frequency">Sample frequency</label><input type="number" id="sample_frequency" min="1000" step="500" max="10000"/></div>
+      <div><label for="audio_scale_exponent">Audio scale exponent</label><input type="number" id="audio_scale_exponent" min="0.0" step="0.05" max="10.0"/></div>
+      
+      <br/>
+      
+      <h2>Display</h2>
+      <div><label for="fall_duration">Fall duration (s)</label><input type="number" id="fall_duration" min="0.01" step="0.01" max="10.0"/></div>
+      <div><label for="brightness">Brightness</label><input type="number" id="brightness" min="0.0" step="0.05" max="1.0"/></div>
+
+      <div><label for="upper_end">Upper end color</label><input type="color" id="upper_end"></div>
+      <div><label for="lower_end">Lower end color</label><input type="color" id="lower_end"></div>
+
+      <br/>
+
+      <button id="button_persist">Persist current state</button>
+      <button id="button_reset">Reset state</button>
+  </div>
+
+  <script>
+    document.getElementById("calibrate_base").checked = calibrate_base_default;
+    document.getElementById("calibrate_tops").checked = calibrate_tops_default;
+    document.getElementById("baseline_offset_exponent").value = baseline_offset_exponent_default;
+    document.getElementById("fall_duration").value = fall_duration_default;
+    document.getElementById("brightness").value = brightness_default;
+    document.getElementById("audio_scale_exponent").value = audio_scale_exponent_default;
+    document.getElementById("upper_end").value = upper_end_default;
+    document.getElementById("lower_end").value = lower_end_default;
+    document.getElementById("sample_frequency").value = sample_frequency_default;
+    
+    var checkboxes = document.getElementById("root").querySelectorAll('input[type=checkbox]');
+    for(var i=0; i<checkboxes.length; ++i)
+      checkboxes[i].setAttribute('onchange', 'update_bool(this)');
+      
+    var colorboxes = document.getElementById("root").querySelectorAll('input[type=color]');
+    for(var i=0; i<colorboxes.length; ++i)
+      colorboxes[i].setAttribute('onchange', 'update_color(this)');
+      
+    var numberboxes = document.getElementById("root").querySelectorAll('input[type=number]');
+    for(var i=0; i<numberboxes.length; ++i)
+      numberboxes[i].setAttribute('onchange', 'update_any(this)');
+
+    document.getElementById("button_persist").onclick = ()=>{
+        send("write_current_state");
+    }
+    
+    document.getElementById("button_reset").onclick = ()=>{
+        send("reset_state");
+    }
+
+  </script>
+</body>
+</html>
