@@ -10,6 +10,7 @@
 #include <WString.h>
 #include <sstream>
 #include <LittleFS.h>
+#include "util.hpp"
 
 #include "site_raw.hpp"
 #include "server.hpp"
@@ -112,23 +113,27 @@ struct state_t {
   std::vector<fft_float> fft_baselines;
   std::vector<fft_float> fft_tops;
 
+  bool baseline_active = false;
+  bool tops_active = false;
+  
+  uint64 last_loop_micros;
+  uint64 last_micros;
+
   std::array<fft_float, 8> binned_interpolated;
   std::array<fft_float, 8> binned_presentation;
 
-  uint last_loop_micros;
   void (*display_loop)(double deltas) = nullptr;
-
-  uint64 last_micros;
-  uint last_update_millis;
-
-  bool baseline_active = false;
-  bool tops_active = false;
 
   std::array<CRGB, 64> rgbs;
   auvis::Server web_server;
 
   struct {
-    const uint16 version = 1001;
+    uint64 last_loop_micros_overflows = 0;
+    uint64 last_micros_overflows = 0;
+  } statistics;
+
+  struct {
+    const uint16 version = 1002;
 
     server_interface<bool> calibrate_base{ "calibrate_base", false };
     server_interface<bool> calibrate_tops{ "calibrate_tops", false };
@@ -138,6 +143,7 @@ struct state_t {
     server_interface<fft_float> audio_scale_exponent{ "audio_scale_exponent", 0.6f };
     server_interface<CRGB, arg_type::integer> upper_end{ "upper_end", CRGB(255, 20, 0) };
     server_interface<CRGB, arg_type::integer> lower_end{ "lower_end", CRGB(100, 100, 100) };
+    server_interface<fft_float> post_average_baseline{ "post_average_baseline", 0.0f };
     server_interface<unsigned> sample_frequency{ "sample_frequency", 5000 };
   } config;
 } state;
@@ -192,6 +198,7 @@ void serialize_config() {
   write_interface(f, state.config.sample_frequency);
   write_interface(f, state.config.upper_end);
   write_interface(f, state.config.lower_end);
+  write_interface(f, state.config.post_average_baseline);
   f.close();
 }
 
@@ -211,6 +218,11 @@ void deserialize_config() {
       read_interface(f, state.config.sample_frequency);
       read_interface(f, state.config.upper_end);
       read_interface(f, state.config.lower_end);
+    }
+
+    if(version >= 1002)
+    {
+      read_interface(f, state.config.post_average_baseline);
     }
     f.close();
   }
@@ -246,6 +258,9 @@ void setup()
   state.audio_presentation.resize(defaults::num_bins, 0.0);
   state.fft_baselines.resize(defaults::num_bins, 0.0);
   state.fft_tops.resize(defaults::num_bins, 0.0);
+
+  state.statistics.last_loop_micros_overflows = 0;
+  state.statistics.last_micros_overflows = 0;
   
   Serial.begin(9200);
   LittleFS.begin();
@@ -266,6 +281,7 @@ void setup()
       state.config.calibrate_base.load_if_arg(server);
       state.config.calibrate_tops.load_if_arg(server);
       state.config.baseline_offset_exponent.load_if_arg(server);
+      state.config.post_average_baseline.load_if_arg(server);
       state.config.fall_duration.load_if_arg(server);
       if(state.config.brightness.load_if_arg(server))
         FastLED.setBrightness(static_cast<uint8>(*state.config.brightness * 255.0));
@@ -288,6 +304,38 @@ void setup()
     state.display_loop = &okay_loop_once;
   });
 
+  state.web_server.on("/status.json", [](ESP8266WebServer& server){
+    std::stringstream status_stream;
+
+    status_stream << "{"
+      << "\"audio_values\": { \"size\": " << state.audio_values.size() << ", \"capacity\": " << state.audio_values.capacity() << " }, "
+      << "\"audio_imag\": { \"size\": " << state.audio_imag.size() << ", \"capacity\": " << state.audio_imag.capacity() << " }, "
+      << "\"audio_presentation\": { \"size\": " << state.audio_presentation.size() << ", \"capacity\": " << state.audio_presentation.capacity() << " }, "
+      << "\"fft_baselines\": { \"size\": " << state.fft_baselines.size() << ", \"capacity\": " << state.fft_baselines.capacity() << " }, "
+      << "\"fft_tops\": { \"size\": " << state.fft_tops.size() << ", \"capacity\": " << state.fft_tops.capacity() << " }, "
+      << "\"baseline_active\": " << state.baseline_active << ", "
+      << "\"tops_active\": " << state.baseline_active << ","
+      << "\"last_loop_micros\": " << state.last_loop_micros << ","
+      << "\"last_micros\": " << state.last_micros << ", "
+      << "\"statistics\": { " 
+      << "\"last_loop_micros_overflows\": " << state.statistics.last_loop_micros_overflows << ", "
+      << "\"last_micros_overflows\": " << state.statistics.last_micros_overflows << "}, ";
+
+
+    status_stream << "\"binned_interpolated\": [" << state.binned_interpolated[0];
+    for(size_t i = 1; i < state.binned_interpolated.size(); ++i)
+      status_stream << ", " << state.binned_interpolated[i];
+    status_stream << "], ";
+    status_stream << "\"binned_presentation\": [" << state.binned_presentation[0];
+    for(size_t i = 1; i < state.binned_presentation.size(); ++i)
+      status_stream << ", " << state.binned_presentation[i];
+    status_stream << "]";
+
+    status_stream << '}';
+
+    server.send(200, "text/html", status_stream.str().c_str());
+  });
+
   state.web_server.on("/", [](ESP8266WebServer& server) {
     server.send(200, "text/html", create_web_page().c_str());
   });
@@ -299,7 +347,6 @@ void setup()
   pinMode(D5, OUTPUT);
 
   state.last_micros = micros64();
-  state.last_update_millis = millis();
 
   system_update_cpu_freq(SYS_CPU_160MHZ);
 
@@ -322,6 +369,7 @@ void do_avg_binning() {
     }
     avg /= defaults::num_bins/16;
     avg = std::pow(avg, *state.config.audio_scale_exponent);
+    avg = auvis::smoothstep(avg, *state.config.post_average_baseline, 1.0f);
     avg = std::max<fft_float>(0.0, std::min<fft_float>(8.0, 9.0*avg));
   }
 }
@@ -388,15 +436,16 @@ void loop()
 
       do_avg_binning();
 
-      state.last_update_millis = millis();
-
       state.audio_values.clear();
       state.audio_imag.clear();
     }
-    state.last_micros = micros64();
+
+    if(current < state.last_micros)
+      state.statistics.last_micros_overflows++;
+    state.last_micros = current;
   }
 
-  double delta_seconds = (micros64() - state.last_loop_micros) / 1000000.0;
+  double delta_seconds = (current - state.last_loop_micros) / 1000000.0;
   if(delta_seconds >= 0.016)
   {
     if(state.display_loop)
@@ -404,9 +453,11 @@ void loop()
     else
       fft_loop(delta_seconds);
 
-    state.last_loop_micros = micros64();
-    state.web_server.poll();
+    if(current < state.last_loop_micros)
+      state.statistics.last_loop_micros_overflows++;
+    state.last_loop_micros = current;
   }
+  state.web_server.poll();
 }
 
 void fft_loop(double delta)
@@ -503,6 +554,7 @@ std::string create_web_page()
   print_default(upper_end);
   print_default(lower_end);
   print_default(sample_frequency);
+  print_default(post_average_baseline);
 
 #undef print_default
   stream << R"html(
@@ -624,6 +676,7 @@ std::string create_web_page()
       <h2>Audio</h2>
       <div><label for="sample_frequency">Sample frequency</label><input type="number" id="sample_frequency" min="1000" step="500" max="10000"/></div>
       <div><label for="audio_scale_exponent">Audio scale exponent</label><input type="number" id="audio_scale_exponent" min="0.0" step="0.05" max="10.0"/></div>
+      <div><label for="post_average_baseline">Post-Averaging Baseline</label><input type="number" id="post_average_baseline" min="0.0" step="0.01" max="1.0"/></div>
       
       <br/>
       
@@ -650,6 +703,7 @@ std::string create_web_page()
     document.getElementById("upper_end").value = upper_end_default;
     document.getElementById("lower_end").value = lower_end_default;
     document.getElementById("sample_frequency").value = sample_frequency_default;
+    document.getElementById("post_average_baseline").value = post_average_baseline_default;
     
     var checkboxes = document.getElementById("root").querySelectorAll('input[type=checkbox]');
     for(var i=0; i<checkboxes.length; ++i)
