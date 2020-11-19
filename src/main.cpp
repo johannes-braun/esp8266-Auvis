@@ -1,3 +1,4 @@
+#define _GLIBCXX_USE_CXX11_ABI 0
 #define FFT_SPEED_OVER_PRECISION
 #define FFT_SQRT_APPROXIMATION
 
@@ -11,6 +12,7 @@
 #include <sstream>
 #include <LittleFS.h>
 #include "util.hpp"
+#include <cstdio>
 
 #include "site_raw.hpp"
 #include "server.hpp"
@@ -29,13 +31,9 @@ CRGB operator*(CRGB const& a, double v)
 {
   return CRGB(a.r * v, a.g * v, a.b * v);
 }
-float mix(float a, float b, float t)
-{
-  return (1 - t) * a + t * b;
-}
 CRGB mixrgb(CRGB a, CRGB b, float t)
 {
-  return CRGB(mix(a.r, b.r, t), mix(a.g, b.g, t), mix(a.b, b.b, t));
+  return CRGB(auvis::mix<float>(a.r, b.r, t), auvis::mix<float>(a.g, b.g, t), auvis::mix<float>(a.b, b.b, t));
 }
 
 enum class arg_type

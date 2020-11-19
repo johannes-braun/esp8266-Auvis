@@ -19,4 +19,10 @@ namespace auvis
         const Float t = clamp<Float>((x - edge0) / (edge1 - edge0), 0.0, 1.0);
         return t * t * (3.0 - 2.0 * t);
     }
+    
+    template<typename Float, typename std::enable_if<std::is_floating_point<Float>::value>::type* = nullptr>
+    Float mix(Float a, Float b, Float t)
+    {
+        return (1 - t) * a + t * b;
+    }
 }
